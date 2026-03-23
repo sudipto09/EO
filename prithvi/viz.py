@@ -18,7 +18,7 @@ def plot_temporal_results(spectral_stack, ndvi_stack, crop_map, labels):
         ax.set_title(f"NDVI (μ={ndvi_stack[t].mean():.2f})")
         ax.axis("off")
 
-    # row 3: crop probability map spanning full width
+    # row 3: crop probability 
     ax_map = fig.add_subplot(3, 1, 3)
     im = ax_map.imshow(crop_map.squeeze(), cmap="magma")
     ax_map.set_title("Double Cropping Probability (Prithvi-EO Inference)")

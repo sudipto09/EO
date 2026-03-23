@@ -10,22 +10,22 @@ BASE_DIR = Path(__file__).resolve().parent
 FOLDERS  = ["march", "june", "august", "nov"]
 LABELS   = ["March", "June", "August", "November"]
 
-# ---- load data ---------------------------------------------------------------
+#load data 
 spectral, ndvi = load_temporal_stack(BASE_DIR, FOLDERS)
 
-# ndvi shape: (4, 224, 224) → T=0 march, T=1 june, T=2 aug, T=3 nov
+# ndvi shape
 ndvi_march, ndvi_june, ndvi_aug, ndvi_nov = ndvi[0], ndvi[1], ndvi[2], ndvi[3]
 
-# ---- cloud mask --------------------------------------------------------------
+#cloud mask
 # clouds = high reflectance across all visible bands
 blue_june = spectral[1, 0]  # B02 june
 cloud_mask = blue_june > 0.3  # high blue reflectance = likely cloud
 print(f"Cloud coverage June: {cloud_mask.mean()*100:.1f}%")
 
-# ---- double cropping rules ---------------------------------------------------
-# Rule: double cropping = high vegetation in spring AND high vegetation in autumn
+#double cropping rules
+#high vegetation in spring and high vegetation in autumn
 # with a clear dip in between (harvest in summer)
-#
+
 # Single crop: peaks once (usually summer)
 # Double crop: peaks twice (spring + autumn), dips in summer
 
@@ -38,7 +38,7 @@ double_crop = (spring_green & summer_harvest & autumn_regrow & not_cloud).astype
 
 soft_map = (
     (ndvi_march > 0.45).astype(float) +
-    (ndvi_june  > 0.5).astype(float)  * (~cloud_mask).astype(float) +  # cloud-weighted
+    (ndvi_june  > 0.5).astype(float)  * (~cloud_mask).astype(float) +  # cloud weighted
     (ndvi_aug   < 0.30).astype(float) +
     (ndvi_nov   > 0.40).astype(float)
 ) / 4.0
@@ -48,7 +48,7 @@ soft_map = np.where(cloud_mask, np.nan, soft_map)
 print(f"Double crop area (hard): {double_crop.mean()*100:.1f}% of patch")
 print(f"Mean soft probability:   {soft_map.mean():.3f}")
 
-# ---- visualize ---------------------------------------------------------------
+#visualize 
 fig = plt.figure(figsize=(18, 12))
 
 # row 1: RGB
@@ -64,7 +64,7 @@ for t in range(4):
     ax.imshow(ndvi[t], cmap="RdYlGn", vmin=0, vmax=1)
     ax.set_title(f"NDVI {LABELS[t]} (μ={ndvi[t].mean():.2f})"); ax.axis("off")
 
-# row 3: hard crop map + soft probability map
+# row 3: double crop maps
 ax1 = fig.add_subplot(3, 2, 5)
 ax1.imshow(double_crop, cmap="RdYlGn", vmin=0, vmax=1)
 ax1.set_title(f"Double Crop Map (Hard Rules)\n{double_crop.mean()*100:.1f}% flagged")
@@ -96,7 +96,7 @@ ha_total, pixels = calculate_area_stats(double_crop_mask)
 agreement_score = np.mean(soft_map[double_crop_mask == 1]) if pixels > 0 else 0
 
 print("-" * 30)
-print(f"SUMMARY")
+print(f"Summary")
 print(f"Total Pixels Flagged: {pixels}")
 print(f"Total Double Crop Area: {ha_total:.2f} ha")
 print(f"Foundation Model Confidence: {agreement_score:.2f}")
