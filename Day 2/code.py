@@ -1,26 +1,71 @@
 import rasterio
 import numpy as np
 import torch
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import os
 
 
-with rasterio.open("b02.tiff") as src:
-    blue = src.read(1).astype(float)
+try:
+    with rasterio.open(os.path.join(os.path.dirname(__file__), "b02.tiff")) as src:
+        blue = src.read(1).astype(float)
+except FileNotFoundError:
+    print("Error: File 'b02.tiff' not found. Please ensure the TIFF files are in the same directory as this script.")
+    raise
+except Exception as e:
+    print(f"Error loading 'b02.tiff': {e}")
+    raise
 
-with rasterio.open("b03.tiff") as src:
-    green = src.read(1).astype(float)
+try:
+    with rasterio.open(os.path.join(os.path.dirname(__file__), "b03.tiff")) as src:
+        green = src.read(1).astype(float)
+except FileNotFoundError:
+    print("Error: File 'b03.tiff' not found.")
+    raise
+except Exception as e:
+    print(f"Error loading 'b03.tiff': {e}")
+    raise
 
-with rasterio.open("b04.tiff") as src:
-    red = src.read(1).astype(float)
+try:
+    with rasterio.open(os.path.join(os.path.dirname(__file__), "b04.tiff")) as src:
+        red = src.read(1).astype(float)
+except FileNotFoundError:
+    print("Error: File 'b04.tiff' not found.")
+    raise
+except Exception as e:
+    print(f"Error loading 'b04.tiff': {e}")
+    raise
 
-with rasterio.open("b08.tiff") as src:
-    nir = src.read(1).astype(float)
+try:
+    with rasterio.open(os.path.join(os.path.dirname(__file__), "b08.tiff")) as src:
+        nir = src.read(1).astype(float)
+except FileNotFoundError:
+    print("Error: File 'b08.tiff' not found.")
+    raise
+except Exception as e:
+    print(f"Error loading 'b08.tiff': {e}")
+    raise
 
-with rasterio.open("b11.tiff") as src:
-    swir1 = src.read(1).astype(float)
+try:
+    with rasterio.open(os.path.join(os.path.dirname(__file__), "b11.tiff")) as src:
+        swir1 = src.read(1).astype(float)
+except FileNotFoundError:
+    print("Error: File 'b11.tiff' not found.")
+    raise
+except Exception as e:
+    print(f"Error loading 'b11.tiff': {e}")
+    raise
 
-with rasterio.open("b12.tiff") as src:
-    swir2 = src.read(1).astype(float)
+try:
+    with rasterio.open(os.path.join(os.path.dirname(__file__), "b12.tiff")) as src:
+        swir2 = src.read(1).astype(float)
+except FileNotFoundError:
+    print("Error: File 'b12.tiff' not found.")
+    raise
+except Exception as e:
+    print(f"Error loading 'b12.tiff': {e}")
+    raise
 
 print("Bands loaded")
 
@@ -41,10 +86,10 @@ plt.figure(figsize=(8,6))
 plt.imshow(rgb)
 plt.title("Sentinel-2 RGB Image")
 plt.axis("off")
-plt.show()
+plt.savefig(os.path.join(os.path.dirname(__file__), 'sentinel_rgb.png'))
 
 # 4. compute NDVI
-ndvi = (nir - red) / (nir + red + 1e-10)
+ndvi = np.nan_to_num((nir - red) / (nir + red + 1e-10))
 ndvi_mean= np.mean(ndvi)
 ndvi_std = np.std(ndvi)
 
