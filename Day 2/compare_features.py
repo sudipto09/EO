@@ -10,7 +10,7 @@ import os
 
 DIR = os.path.dirname(__file__)
 
-# --- Load Bands ---
+#bands loading
 def load_band(filename):
     with rasterio.open(os.path.join(DIR, filename)) as src:
         return src.read(1).astype(float)
@@ -20,7 +20,7 @@ print("Bands loaded. Image shape:", np.stack([blue, green, red, nir, swir1, swir
 
 image = np.stack([blue, green, red, nir, swir1, swir2])
 
-# --- RGB Visualization ---
+# rgb visualization
 rgb = np.stack([red, green, blue], axis=2)
 p2, p98 = np.percentile(rgb, (2, 98))
 rgb = np.clip((rgb - p2) / (p98 - p2), 0, 1)
@@ -30,7 +30,7 @@ plt.imshow(rgb); plt.title("Sentinel-2 RGB Image"); plt.axis("off")
 plt.savefig(os.path.join(DIR, "rgb_image.png"))
 plt.show(); input("Press Enter to continue...")
 
-# --- NDVI ---
+#ndvi
 ndvi = np.nan_to_num((nir - red) / (nir + red + 1e-10))
 print(f"\nNDVI — Mean: {np.mean(ndvi):.4f}, Std: {np.std(ndvi):.4f}")
 
@@ -39,17 +39,25 @@ plt.imshow(ndvi, cmap="RdYlGn"); plt.colorbar(); plt.title("NDVI Map"); plt.axis
 plt.savefig(os.path.join(DIR, "ndvi_map.png"))
 plt.show(); input("Press Enter to continue...")
 
-# --- ViT Feature Extraction ---
+#vit features
 rgb_patch = (image[[2, 1, 0], :224, :224] / image.max())
 rgb_tensor = torch.tensor(rgb_patch).float().unsqueeze(0)
 print("\nPatch tensor shape:", rgb_tensor.shape)
 
-model = models.vit_b_16(pretrained=True)
+model = models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT)
 model.eval()
-feature_extractor = torch.nn.Sequential(*list(model.children())[:-1])
+
+# Extract features
+features_holder = {}
+def hook_fn(module, input, output):
+    features_holder["features"] = output
+
+model.heads.register_forward_hook(hook_fn)
 
 with torch.no_grad():
-    features = feature_extractor(rgb_tensor).squeeze()
+    _ = model(rgb_tensor)
+
+features = features_holder["features"].squeeze()
 print("Feature vector shape:", features.shape)
 
 plt.figure(figsize=(10, 4))
@@ -58,7 +66,7 @@ plt.title("ViT Feature Embeddings (First 100)"); plt.xlabel("Feature Index"); pl
 plt.savefig(os.path.join(DIR, "feature_embeddings.png"))
 plt.show(); input("Press Enter to continue...")
 
-# --- Double Cropping NDVI Comparison ---
+#double crop and compare NDVI
 def patch_ndvi(img, row, col):
     p = img[:, row:row+224, col:col+224]
     return np.nan_to_num((p[3] - p[2]) / (p[3] + p[2] + 1e-10))
