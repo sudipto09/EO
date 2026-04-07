@@ -15,7 +15,7 @@ def load_temporal_stack(base_dir, folders, patch_size=224):
             file = next(month_path.glob(f"*{b_key}*.tiff"))
             with rasterio.open(file) as src:
                 arr = src.read(1).astype(np.float32)
-                # normalize per-band to [0,1] regardless of source scaling
+                # normalize per-band 
                 arr = (arr - arr.min()) / (arr.max() - arr.min() + 1e-10)
                 bands.append(arr[:patch_size, :patch_size])
 
