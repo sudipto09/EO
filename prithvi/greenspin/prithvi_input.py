@@ -15,7 +15,7 @@ HALF = CHIP_SIZE // 2
 
 os.makedirs(OUTPUT_PATH, exist_ok=True)
 #load field
-LAYER_NAME = 'intra_field — sb_fields_wue_2024'
+LAYER_NAME = 'sb_fields_wue_2024'
 layer    = QgsProject.instance().mapLayersByName(LAYER_NAME)[0]
 selected = layer.selectedFeatures()
 if not selected:
@@ -27,7 +27,7 @@ else:
     to_raster   = QgsCoordinateTransform(layer.crs(), raster_crs, QgsProject.instance())
     centroid     = field.geometry().centroid().asPoint()
     centroid_utm = to_raster.transform(centroid)
-    #UTM coords to pixel indices
+    #utm coords to pixel indices
     img_path = os.path.join(BASE_PATH, DATE_FOLDER, PATCH_ID, 'bands.tif')
     ds = gdal.Open(img_path)
     if ds is None:
@@ -52,31 +52,29 @@ else:
                 for b in PRITHVI_BANDS
             ]
             chip = np.stack(bands, axis=0).astype(np.float32)
-            #prithvi format
+            
             #save chip
             filename  = f"prithvi_input_FID{field.id()}_{DATE_FOLDER}.npy"
             save_path = os.path.join(OUTPUT_PATH, filename)
             np.save(save_path, chip)
             print(f"Saved {chip.shape} array → {save_path}")
 
-            #burn field polygon into a 224×224 boolean mask
+            #field polygon into  224×224 boolean mask
             geom = field.geometry()
             geom.transform(to_raster)
             wkt = geom.asWkt()
 
             driver  = gdal.GetDriverByName('MEM')
             mask_ds = driver.Create('', CHIP_SIZE, CHIP_SIZE, 1, gdal.GDT_Byte)
-            print(f"Field geometry WKT (first 200 chars): {wkt[:200]}")
-            print(f"Chip extent: X {chip_gt[0]:.1f} to {chip_gt[0]+224*gt[1]:.1f}, Y {chip_gt[3]+224*gt[5]:.1f} to {chip_gt[3]:.1f}")
 
-            #geotransform aligned to the chip extent
+            #geotransform aligned to chip 
             chip_gt = (
-                gt[0] + x1 * gt[1],   # chip origin X
-                gt[1],                  # pixel width
+                gt[0] + x1 * gt[1],# chip origin X
+                gt[1],# pixel width
                 0,
                 gt[3] + y1 * gt[5],   # chip origin Y
                 0,
-                gt[5]                   # pixel height (negative)
+                gt[5] # pixel height (-)
             )
             mask_ds.SetGeoTransform(chip_gt)
             mask_ds.SetProjection(ds.GetProjection())
@@ -118,4 +116,4 @@ else:
         except Exception as e:
             print(f"Extraction failed: {e}")
         finally:
-            ds = None   # close raster file
+            ds = None

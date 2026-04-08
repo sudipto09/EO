@@ -5,6 +5,7 @@ import matplotlib.gridspec as gridspec
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
 from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 import rasterio
 from rasterio.transform import from_origin
 from rasterio.crs import CRS
@@ -13,18 +14,19 @@ import json
 import os
 
 #config
-FIELD_ID     = 1
-DATE         = '2024-05-13'
-OUTPUT_PATH  = r'C:\Users\Sudipto\internship\EO\prithvi\greenspin\multi_crop_output'
+FIELD_ID= 1812
+DATE = '2024-05-13'
+OUTPUT_PATH= r'C:\Users\Sudipto\internship\EO\prithvi\greenspin\multi_crop_output'
 
-CHIP_PATH    = os.path.join(OUTPUT_PATH, f'prithvi_input_FID{FIELD_ID}_{DATE}.npy')
-META_PATH    = os.path.join(OUTPUT_PATH, f'prithvi_meta_FID{FIELD_ID}_{DATE}.json')
+CHIP_PATH= os.path.join(OUTPUT_PATH, f'prithvi_input_FID{FIELD_ID}_{DATE}.npy')
+META_PATH= os.path.join(OUTPUT_PATH, f'prithvi_meta_FID{FIELD_ID}_{DATE}.json')
+MASK_PATH= os.path.join(OUTPUT_PATH, f'prithvi_mask_FID{FIELD_ID}_{DATE}.npy')
 
 TEMPORAL_REPEATS = 4
-PATCH_GRID       = 14
-CHIP_SIZE        = 224       
-N_CLUSTERS       = 2
-RANDOM_SEED      = 42 
+PATCH_GRID= 14
+CHIP_SIZE= 224       
+N_CLUSTERS= 2
+RANDOM_SEED= 42 
 
 os.makedirs(OUTPUT_PATH, exist_ok=True) 
 
@@ -34,9 +36,13 @@ print(f"Running on: {device}")
 model, decoder = load_pipeline(device)
 
 
-#shape: (6, 224, 224) — bands B2 B3 B4 B8 B11 B12
+#shape: (6, 224, 224) — bands b2 b3 b4 b8 b11 b12
 chip = np.load(CHIP_PATH)
 print(f"Chip loaded: {chip.shape}")
+
+# Load field mask (224×224)
+mask_224 = np.load(MASK_PATH).astype(np.float32)   # shape (224, 224), values 0/1
+print(f"Mask unique values: {np.unique(mask_224)}|sum: {mask_224.sum()}")
 
 #stretch a band to 0–1 using 2nd/98th percentile
 def norm(arr):
@@ -44,9 +50,9 @@ def norm(arr):
     return np.clip((arr - lo) / (hi - lo + 1e-9), 0, 1)
 
 #display images
-rgb       = np.stack([norm(chip[2]), norm(chip[1]), norm(chip[0])], axis=-1)
+rgb= np.stack([norm(chip[2]), norm(chip[1]), norm(chip[0])], axis=-1)
 nir_false = np.stack([norm(chip[3]), norm(chip[2]), norm(chip[1])], axis=-1)
-ndvi      = (chip[3] - chip[2]) / (chip[3] + chip[2] + 1e-6)
+ndvi= (chip[3] - chip[2]) / (chip[3] + chip[2] + 1e-6)
 ndvi_display = np.clip(ndvi, 0, 1)
 
 #run prithvi encoder 
@@ -59,31 +65,42 @@ input_tensor = (
 
 print("Running encoder...")
 with torch.no_grad():
-    last_block   = model.forward_features(input_tensor)[-1]
+    last_block= model.forward_features(input_tensor)[-1]
     patch_tokens = last_block[:, 1:, :]
     patch_tokens = patch_tokens.reshape(1, TEMPORAL_REPEATS, 196, 1024).mean(dim=1)
 
-embeddings  = patch_tokens.squeeze(0).cpu().numpy()   # (196, 1024)
-feature_map = np.linalg.norm(embeddings, axis=1).reshape(PATCH_GRID, PATCH_GRID)
+embeddings = patch_tokens.squeeze(0).cpu().numpy()   # (196, 1024)
+feature_map= np.linalg.norm(embeddings, axis=1).reshape(PATCH_GRID, PATCH_GRID)
 
-#K-Means clustering
-print("Clustering patch embeddings...")
-kmeans      = KMeans(n_clusters=N_CLUSTERS, random_state=RANDOM_SEED, n_init='auto')
-labels      = kmeans.fit_predict(embeddings)
-cluster_map = labels.reshape(PATCH_GRID, PATCH_GRID)
+#pixel-level clustering inside field mask
+print("Clustering field pixels...")
+pixels  = chip.reshape(6, -1).T                  
+field_pixels = pixels[mask_224.ravel() == 1]          # only field pixels
+print(f"Field pixels: {len(field_pixels)}")
 
-#downsampled NDVI matches cluster_map
-patch_size   = CHIP_SIZE // PATCH_GRID
-ndvi_patches = ndvi.reshape(PATCH_GRID, patch_size, PATCH_GRID, patch_size).mean(axis=(1, 3))
+scaler = StandardScaler()
+field_pixels_scaled = scaler.fit_transform(field_pixels)
+
+kmeans= KMeans(n_clusters=N_CLUSTERS, random_state=RANDOM_SEED, n_init='auto')
+pixel_labels = kmeans.fit_predict(field_pixels_scaled)
+
+# full 224×224 label map (2 : outside field)
+pixel_cluster_map= np.full(224 * 224, 2, dtype=int)
+pixel_cluster_map[mask_224.ravel() == 1] = pixel_labels
+pixel_cluster_map = pixel_cluster_map.reshape(224, 224)
+
+#NDVI per field pixel
+ndvi_flat= ndvi.ravel()
+field_ndvi= ndvi_flat[mask_224.ravel() == 1]
 
 #per-cluster stats
-cluster_counts   = [int(np.sum(labels == i))                       for i in range(N_CLUSTERS)]
-cluster_ndvi_avg = [float(np.mean(ndvi_patches[cluster_map == i])) for i in range(N_CLUSTERS)]
-cluster_pct      = [c / len(labels) * 100                          for c in cluster_counts]
+cluster_counts= [int(np.sum(pixel_labels == i)) for i in range(N_CLUSTERS)]
+cluster_ndvi_avg= [float(np.mean(field_ndvi[pixel_labels == i])) for i in range(N_CLUSTERS)]
+cluster_pct = [c / len(pixel_labels) * 100 for c in cluster_counts]
 
 #greener cluster as crop a
-greener_idx             = int(np.argmax(cluster_ndvi_avg))
-crop_names              = ['', '']
+greener_idx = int(np.argmax(cluster_ndvi_avg))
+crop_names = ['', '']
 crop_names[greener_idx]   = 'Crop A  (higher NDVI)'
 crop_names[1-greener_idx] = 'Crop B  (lower NDVI)'
 
@@ -141,7 +158,7 @@ cb2.ax.yaxis.set_tick_params(color=LABEL_COLOR, labelsize=7)
 cb2.outline.set_edgecolor('#444444')
 plt.setp(cb2.ax.yaxis.get_ticklabels(), color=LABEL_COLOR)
 
-#3. feature intensity
+#4. feature intensity
 im3 = ax[3].imshow(feature_map, cmap='viridis', interpolation='nearest')
 for x in range(PATCH_GRID + 1):
     ax[3].axvline(x - 0.5, color='white', linewidth=0.3, alpha=0.4)
@@ -154,30 +171,31 @@ cb3.ax.yaxis.set_tick_params(color=LABEL_COLOR, labelsize=7)
 cb3.outline.set_edgecolor('#444444')
 plt.setp(cb3.ax.yaxis.get_ticklabels(), color=LABEL_COLOR)
 
-#4. cluster map
-cmap_binary = ListedColormap(['#2ecc71', '#e74c3c'])
-ax[4].imshow(cluster_map, cmap=cmap_binary, interpolation='nearest', vmin=0, vmax=1)
-for x in range(PATCH_GRID + 1):
-    ax[4].axvline(x - 0.5, color='white', linewidth=0.3, alpha=0.5)
-    ax[4].axhline(x - 0.5, color='white', linewidth=0.3, alpha=0.5)
-for row in range(PATCH_GRID):
-    for col in range(PATCH_GRID):
-        ax[4].text(col, row, str(cluster_map[row, col]),
-                   ha='center', va='center', fontsize=5,
-                   color='white', fontweight='bold')
-style(ax[4], 'Crop zone map  (K-Means, 2 clusters)',
-      xlabel='Patch column', ylabel='Patch row')
+
+#5. cluster map
+cmap_three = ListedColormap(['#2ecc71', '#e74c3c', '#1a1a1a'])
+ax[4].imshow(pixel_cluster_map, cmap=cmap_three, interpolation='nearest', vmin=0, vmax=2)
+style(ax[4], 'Crop zone map  (pixel-level K-Means)')
+ax[4].set_xticks([]); ax[4].set_yticks([])
+
+# zoom into field bounding box with padding
+field_rows, field_cols = np.where(mask_224 == 1)
+pad = 20
+ax[4].set_xlim(field_cols.min() - pad, field_cols.max() + pad)
+ax[4].set_ylim(field_rows.max() + pad, field_rows.min() - pad)   # inverted y for image coords
+
 ax[4].legend(
     handles=[Patch(facecolor='#2ecc71', label=crop_names[0]),
-             Patch(facecolor='#e74c3c', label=crop_names[1])],
+             Patch(facecolor='#e74c3c', label=crop_names[1]),
+             Patch(facecolor='#1a1a1a', label='Outside field')],
     loc='lower right', fontsize=7,
     facecolor='#1a1a1a', edgecolor='#444444', labelcolor=LABEL_COLOR
 )
 
-#5. cluster vs ndvi
-scatter_colors = ['#2ecc71' if l == 0 else '#e74c3c' for l in labels]
-jitter = np.random.default_rng(42).uniform(-0.08, 0.08, size=len(labels))
-ax[5].scatter(labels + jitter, ndvi_patches.ravel(),
+#6. cluster vs ndvi
+scatter_colors = ['#2ecc71' if l == 0 else '#e74c3c' for l in pixel_labels]
+jitter = np.random.default_rng(42).uniform(-0.08, 0.08, size=len(pixel_labels))
+ax[5].scatter(pixel_labels + jitter, field_ndvi,
               c=scatter_colors, alpha=0.7, s=18, edgecolors='none')
 ax[5].set_xticks([0, 1])
 ax[5].set_xticklabels(['Cluster 0', 'Cluster 1'], color=LABEL_COLOR, fontsize=8)
@@ -213,9 +231,9 @@ verdict = (
     'Weak spectral separation : could be stress zones rather than different crops.'
 )
 ax[6].text(0.5, 0.22,
-    f'{crop_names[0]}: {cluster_counts[0]} patches ({cluster_pct[0]:.0f}%), '
+    f'{crop_names[0]}: {cluster_counts[0]} pixels ({cluster_pct[0]:.0f}%), '
     f'mean NDVI = {cluster_ndvi_avg[0]:.3f}    |    '
-    f'{crop_names[1]}: {cluster_counts[1]} patches ({cluster_pct[1]:.0f}%), '
+    f'{crop_names[1]}: {cluster_counts[1]} pixels ({cluster_pct[1]:.0f}%), '
     f'mean NDVI = {cluster_ndvi_avg[1]:.3f}    |    '
     f'NDVI gap = {ndvi_diff:.3f}    |    {verdict}',
     ha='center', va='center', color=LABEL_COLOR, fontsize=8,
@@ -231,38 +249,34 @@ print(f"Dashboard saved: {dashboard_path}")
 #geottiff output
 print("Saving GeoTIFF...")
 
-
 with open(META_PATH) as f:
     meta = json.load(f)
 
-gt     = meta['source_gt']   
-x1     = meta['x1_px']       
-y1     = meta['y1_px']       
-px_w   =  gt[1]              
-px_h   = -gt[5]              
+gt = meta['source_gt']   
+x1 = meta['x1_px']       
+y1 = meta['y1_px']       
+px_w =  gt[1]              
+px_h = -gt[5]              
 
 #top-left corner of the chip in geospatial coordinates
 chip_origin_x = gt[0] + x1 * px_w
 chip_origin_y = gt[3] + y1 * gt[5]   #gt[5] is -, adding to go downwards
 
-#cluster patch = 16 source pixels x 10 m = 160 m
-patch_res_x = px_w * (CHIP_SIZE / PATCH_GRID)   # 160.0 m
-patch_res_y = px_h * (CHIP_SIZE / PATCH_GRID)   # 160.0 m
-
-geo_transform = from_origin(chip_origin_x, chip_origin_y, patch_res_x, patch_res_y)
+#pixel resolution (10 m)
+geo_transform = from_origin(chip_origin_x, chip_origin_y, px_w, px_h)
 
 tif_path = os.path.join(OUTPUT_PATH, f'cluster_map_FID{FIELD_ID}_{DATE}.tif')
 
 with rasterio.open(
     tif_path, 'w',
-    driver    = 'GTiff',
-    height    = PATCH_GRID,
-    width     = PATCH_GRID,
-    count     = 1,
-    dtype     = 'uint8',
-    crs       = CRS.from_wkt(meta['crs_wkt']),
+    driver = 'GTiff',
+    height  = CHIP_SIZE,
+    width = CHIP_SIZE,
+    count = 1,
+    dtype = 'uint8',
+    crs = CRS.from_wkt(meta['crs_wkt']),
     transform = geo_transform,
 ) as dst:
-    dst.write(cluster_map.astype('uint8'), 1)
+    dst.write(pixel_cluster_map.astype('uint8'), 1)
 
 print(f"GeoTIFF saved: {tif_path}")
